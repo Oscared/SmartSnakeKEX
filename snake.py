@@ -13,6 +13,7 @@ class Snake(object):
 		self.isdead = False;
 
 		self.score = 0;
+		self.stepsSinceScoring = 0;
 
 	def initPosition(self, position, tail):
 
@@ -32,9 +33,11 @@ class Snake(object):
 		for pos in self.tail:
 			self.map.setTile(pos[0], pos[1], Map.tile_snake);
 		self.map.setTile(self.position[0], self.position[1], Map.tile_snake_mouth);
+		self.map.setTile(self.tail[-1][0], self.tail[-1][1], Map.tile_snake_tail);
 
 		self.isdead = False;
 		self.score = 0;
+		self.stepsSinceScoring = 0;
 
 
 	def move(self, direction):
@@ -57,15 +60,25 @@ class Snake(object):
 		self.tail.insert(0,prev_pos);
 
 		self.map.setTile(prev_pos[0], prev_pos[1], Map.tile_snake);
-		self.map.setTile(self.position[0], self.position[1], Map.tile_snake_mouth);
+
+		self.stepsSinceScoring += 1;
 
 		if (tile != Map.tile_apple and tile != Map.tile_golden_apple):
 			end = self.tail.pop();
+			tail = self.tail[-1];
 			self.map.setTile(end[0], end[1], Map.tile_empty);
+			self.map.setTile(tail[0], tail[1], Map.tile_snake_tail);
+			self.stepsSinceScoring = 0;
 
-		if(tile == Map.tile_wall or tile == Map.tile_snake):
-			self.die();
 		
+		self.map.setTile(self.position[0], self.position[1], Map.tile_snake_mouth);
+
+
+		if(tile == Map.tile_wall or tile == Map.tile_snake or tile == Map.tile_snake_tail):
+			self.die();
+		if(self.stepsSinceScoring > 40):
+			self.die();
+
 		s = 0;
 		if(tile == Map.tile_apple):
 			s = 1;

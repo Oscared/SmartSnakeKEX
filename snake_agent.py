@@ -1,4 +1,5 @@
-import numpy as np
+import numpy as np;
+import matplotlib.pyplot as plt;
 
 import keras
 from collections import deque
@@ -23,10 +24,11 @@ class Agent(object):
 
 		self.memory = list();
 		self.gamma = 0.95;
-		self.epsilon = 1.0
+		self.epsilon = 0.1
 		self.epsilon_min = 0.05;
 		self.epsilon_decay = 0.9995;
-		self.learning_rate = 0.001;
+		self.learning_rate = 0.005;
+		self.step_reward = -0.02;
 
 		self.times = [0,0,0,0];
 
@@ -38,15 +40,16 @@ class Agent(object):
 
 	def _createModel(self):
 		self.model = keras.models.Sequential();
-		self.model.add(keras.layers.Convolution2D(24, (3,3), padding='same', activation="relu", input_shape=self.state_size));
-		self.model.add(keras.layers.Convolution2D(24, (3,3), padding='same', activation='relu'));
+		self.model.add(keras.layers.Convolution2D(25, (3,3), padding='same', activation="relu", input_shape=self.state_size));
+		self.model.add(keras.layers.Convolution2D(25, (3,3), padding='same', activation='relu'));
 		self.model.add(keras.layers.AveragePooling2D(pool_size=(2,2)));
-		self.model.add(keras.layers.Convolution2D(48, (3,3), padding='same', activation='relu'));
-		self.model.add(keras.layers.Convolution2D(48, (3,3), padding='same', activation='relu'));
+		self.model.add(keras.layers.Convolution2D(50, (3,3), padding='same', activation='relu'));
+		self.model.add(keras.layers.Convolution2D(50, (3,3), padding='same', activation='relu'));
+		self.model.add(keras.layers.AveragePooling2D(pool_size=(2,2)));
 
 		self.model.add(keras.layers.Flatten());
-		self.model.add(keras.layers.Dense(64, activation="relu"));
-		self.model.add(keras.layers.Dropout(0.25));
+		self.model.add(keras.layers.Dropout(0.1));
+		self.model.add(keras.layers.Dense(100, activation="relu"));
 		self.model.add(keras.layers.Dense(self.action_size, activation="linear"));
 
 		self.model.compile(loss="mse", optimizer=keras.optimizers.Adam(lr=self.learning_rate));
@@ -75,6 +78,8 @@ class Agent(object):
 		targets = np.zeros((size, 4));
 		i = 0;
 		for state, action, target, new_state, done in batch:
+			if(target == 0):
+				target = self.step_reward;
 			if not done:
 				target += self.gamma * np.amax(self.model.predict(new_state)[0]);
 
@@ -84,9 +89,6 @@ class Agent(object):
 			states[i] = state;
 			targets[i] = target_f;
 			i+=1;
-			# self.model.fit(state, target_f, epochs=1, verbose=0)
-			# fit_time = time.time()-t-predict_time;
-			# self.times[2] += fit_time;
 
 		self.model.fit(states, targets, batch_size=32, epochs=1, verbose=0);
 		
@@ -103,18 +105,40 @@ class Universe(object):
 
 	def __init__(self, map_size):
 
+		self.best_benchmark = (0,0,0);
+
 		self.batch_size = 32;
+		self.map_size = map_size;
 		self.state_size = (map_size[0], map_size[1], 1);
+		self.min_step = 2;
 
 		width = map_size[0];
 		height = map_size[1];
 
 		self.agent = Agent((width, height, 1), len(Universe.action_space));
-		self.environment = map.Map(map_size[0], map_size[1]);
-		self.snake = snake.Snake(self.environment);
+		self.environment = map.RestrictedMap(map_size[0], map_size[1]);
+		self.snake = snake.Snake(self.environment.getMap());
 
-		self.environment.generateMap();
-		self.snake.initPosition([width//2+1, height//2], [[width//2, height//2], [width//2-1, height//2]]);
+		self.snake.initPosition([width//2+1, height//2], [[width//2, height//2]]);
+		self.environment.init();
+
+	def setSize(self, width, height):
+		w = width;
+		h = height;
+
+		if(w < 5):
+			w = 5;
+		if(h < 5):
+			h = 5;
+		if(w >= self.map_size[0]):
+			w = self.map_size[0];
+		if(h >= self.map_size[1]):
+			h = self.map_size[1];
+
+		self.environment.limitSize(w,h);
+		self.snake = snake.Snake(self.environment.getMap());
+		self.snake.initPosition([w//2+1, h//2], [[w//2, h//2]]);
+		self.environment.init();
 
 	def setModel(self, model):
 		self.agent.setModel(model);
@@ -129,6 +153,8 @@ class Universe(object):
 		self.agent._createModel();
 
 	def trainOnExternalData(self, path, verbose=True):
+		epsilon = self.agent.epsilon;
+
 		l = 0;
 		with open(path, "rb") as f:
 			data = pickle.load(f);
@@ -138,21 +164,19 @@ class Universe(object):
 			f.close();
 
 		s = 128;
-		x = (l//32)*5;
+		x = (l//32)*4;
 		g = int(np.log10(x))+1;
 		if(s > l):
 			s = l;
 		if(verbose):
-			print("Training on external data:");
+			sys.stdout.write("Training on external data:");
 		for i in range(x):
 			if(verbose):
 				progressbar = "="*(20*i//x) + ">" + " "*(19-20*i//x);
 				sys.stdout.write(("\rBatch {: "+str(g)+"d}/{:d} |{:s}| ").format(i+1, x, progressbar));
 
 			self.agent.replay(s);
-
-		if(verbose):
-			print("");
+		self.agent.epsilon = epsilon;
 
 
 	def train(self, games, verbose=True):
@@ -166,7 +190,8 @@ class Universe(object):
 			total_score += score;
 			total_steps += steps;
 			if(len(self.agent.memory) > self.batch_size):
-				self.agent.replay(self.batch_size);
+				for j in range(2+steps//self.batch_size):
+					self.agent.replay(self.batch_size);
 
 			if(verbose):
 				progressbar = "="*(20*i//games) + ">" + " "*(19-20*i//games);
@@ -178,30 +203,46 @@ class Universe(object):
 			, total_steps));
 
 
-	def play(self, render=True):
-		score, steps, length = self._run(memorize=False, render=render);
+	def play(self, render=True, step=False):
+		score, steps, length = self._run(memorize=False, render=render, step=step);
+		seed = self.environment.getSeed();
+		oa = self.environment.getOpenArea();
 		if(render):
-			print("{} points in {} steps".format(score, steps));
-		return (score, steps, length);
+			print("{} points with length {} in {} steps  (seed was {})".format(score, length, steps, seed));
+		return (score, steps, length, oa);
 
 	def benchmark(self, games, verbose=False):
 		score = 0;
 		steps = 0;
 		length = 0;
-		
+		area = 0;
+		g = int(np.log10(games))+1;
 		for i in range(games):
-			s, c, l = self.play(render=False);
+			s, c, l, oa = self.play(render=False);
 			score += s;
 			steps += c;
 			length += l;
-		return (score/games, steps/games, length/games);
+			area += oa;
+			if(verbose):
+				progressbar = "="*(20*i//games) + ">" + " "*(19-20*i//games);
+				sys.stdout.write(("\r{:"+str(g)+"d}/{:d} |{:s}| ").format(i+1, games, progressbar));
+
+		if(verbose):
+			sys.stdout.write("\r");
+
+		return (score/games, steps/games, length/games, area/games);
 		
 
+	def plot(self):
 
-	def _run(self, memorize=True, render=False):
+		self.environment.saveState("test.state");
+		
+
+	def _run(self, memorize=True, render=False, step=False):
 
 		self.environment.reset();
 		self.snake.reset();
+		self.environment.init();
 
 		if(render):
 			self.environment.render();
@@ -232,15 +273,21 @@ class Universe(object):
 			if(done):
 				reward = -5;
 
-			if(reward == 0):
-				reward = -0.1;
-
 			if(memorize):
 				self.agent.memoryPut(state, action, reward, next_state, done);
 
 			if(render):
 				time.sleep(0.25);
 				self.environment.render();
+			if(step):
+				print("Step [s]/plot [p]/exit [e]?");
+				inp = input();
+				if(inp == "s"):
+					continue;
+				elif(inp == "p"):
+					self.plot();
+				elif(inp == "e"):
+					break;
 
 			state = next_state;
 
@@ -250,14 +297,16 @@ class Universe(object):
 
 if __name__ == "__main__":
 
-	opts, args = getopt.getopt(sys.argv[1:], "m:n:o:g:d:e:vptsrb"
-		, ["model=", "output=", "games=", "epochs=", "pretrain=" "play", "verbose", "train", "summarize", "record", "benchmark"]);
+	opts, args = getopt.getopt(sys.argv[1:], "m:n:o:g:e:a:s:w:h:kvptrdbi"
+		, ["model=", "output=", "games=", "epochs=", "pretrain=", "seed=", "width=", "height=", "step", "play", "verbose", "train", "incremental", "describe", "record", "benchmark"]);
 
-	size = (16, 8);
+	size = [12, 8];
+	mapsize = [6,5];
+	limitsize = False;
 	model = None;
 	output = None;
-	games = 250;
-	epochs = 1;
+	games = 500;
+	epochs = 25;
 	train = False;
 	play = False;
 	summarize = False;
@@ -265,6 +314,8 @@ if __name__ == "__main__":
 	verbose = False;
 	record = False;
 	benchmark = False;
+	seed = None;
+	step = False;
 
 	for o, a in opts:
 		if(o in ["-m", "--model"]):
@@ -275,15 +326,23 @@ if __name__ == "__main__":
 			games = int(a);
 		elif(o in ["-e", "--epochs"]):
 			epochs = int(a);
-		elif(o in ["-d", "--pretrain"]):
+		elif(o in ["-a", "--pretrain"]):
 			pretrain = a;
+		elif(o in ["-s", "--seed"]):
+			seed = a;
+		elif(o in ["-w", "--width"]):
+			mapsize[0] = int(a);
+			limitsize = True;
+		elif(o in ["-h", "--height"]):
+			mapsize[1] = int(a);
+			limitsize = True;
 		elif(o == "-n"):
 			model = output = a;
 		elif(o == "-p"):
 			play = True;
 		elif(o == "-t"):
 			train = True;
-		elif(o == "-s"):
+		elif(o == "-d"):
 			summarize = True;
 		elif(o == "-v"):
 			verbose = True;
@@ -291,13 +350,17 @@ if __name__ == "__main__":
 			record = True;
 		elif(o == "-b"):
 			benchmark = True;
+		elif(o == "-i"):
+			limitsize = True;
+		elif(o == "-k"):
+			step = True;
 
 	for a in args:
 		if(a in ["-p","play"]):
 			play = True;
 		elif(a in ["-t", "train"]):
 			train = True;
-		elif(a in ["-s","summarize"]):
+		elif(a in ["-d","describe"]):
 			summarize = True;
 		elif(a in ["-v", "verbose"]):
 			verbose = True;
@@ -305,9 +368,18 @@ if __name__ == "__main__":
 			record = True;
 		elif(a in ["-b", "benchmark"]):
 			benchmark = True;
+		elif(a in ["-i", "incremental"]):
+			limitsize = True;
 			
 
 	universe = Universe(size);
+
+	if(limitsize):
+		universe.setSize(mapsize[0], mapsize[1]);
+		print("Using incremental mapsize for training");
+	else:
+		mapsize = size;
+		print("Using fixed mapsize for training");
 
 	if(model != None):
 		universe.loadModel(model);
@@ -321,33 +393,62 @@ if __name__ == "__main__":
 		universe.trainOnExternalData(pretrain);
 
 	if(train):
+		start = time.time();
 		for i in range(epochs):
-			print("Epoch " + str(i+1));
+			
+			if(limitsize):
+				print("Epoch {}, size: {}x{}".format(i+1, mapsize[0], mapsize[1]));
+			else:
+				print("Epoch " + str(i+1));
+			
 			universe.train(games, verbose=verbose);
-			universe.agent.memory.clear();
-			universe.agent.epsilon += 0.1;
-			universe.agent.epsilon_min /= np.exp(np.log(10)/epochs);
+			universe.agent.epsilon_min /= np.exp(np.log(20)/epochs);
+			score, steps, length, area = universe.benchmark(games//10, verbose=verbose);
+			
+			if(games*i%5000 == 0):
+				universe.agent.memory.clear();
 			if(output != None):
 				universe.saveModel(output);
-			if(record):
-				score, steps, length = universe.benchmark(100);				
+			if(record):			
 				print("Playing average: {}p in {} steps with length {}".format(score, steps, length));
 				name = output;
 				if(name == None):
 					name = "record";
 				name += ".csv";
 				with open(name, "a+") as f:
-					f.write("{},{},{},{}\n".format((i+1)*games, score, steps, length));
+					f.write("{},{},{},{},{},{}\n".format((i+1)*games, (time.time()-start)/3600, score, steps, length, mapsize[0]*mapsize[1]));
 					f.close();
+
+			if(limitsize and (length >= int((mapsize[0]-2)*(mapsize[1]-2)*0.8-2) or area-length < 6*(mapsize[0]*mapsize[1]/(size[0]*size[1])))):
+				mapsize[0]+=1;
+				mapsize[1]+=1;
+				if(mapsize[0] > size[0]):
+					mapsize[0] = size[0];
+				if(mapsize[1] > size[1]):
+					mapsize[1] = size[1];
+
+				universe.setSize(mapsize[0], mapsize[1]);
+				universe.agent.epsilon += 0.15;
 
 	if(benchmark):
 		print("Benchmarking...");
-		score, steps, length = universe.benchmark(100);
+		score, steps, length, best = universe.benchmark(250, verbose);
 		print("Playing average: {}p in {} steps with length {}".format(score, steps, length));
 
 
 	if(play):
-		universe.play();
+		if(seed != None):
+			try:
+				seed = int(seed);
+			except ValueError:
+				pass;
+			universe.environment.setSeed(seed);
+		while True:
+			universe.play(step=step);
+			print("Play again? [y/N]");
+			if(input() != "y"):
+				break;
+		
 
 	
 

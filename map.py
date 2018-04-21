@@ -7,17 +7,33 @@ except ImportError:
 	perlin = False;
 	print("Noise module not found. Falling back to random in-map wall placements");
 
+
+
+
+
+
+
 class Map(object):
 
 	tile_empty = 0;
 	tile_wall = 1;
 	tile_apple = 2;
 	tile_golden_apple = 3;
-	tile_snake = 4;
-	tile_snake_mouth = 5;
+	tile_snake_tail = 4;
+	tile_snake = 5;
+	tile_snake_mouth = 6;
+	
+
+	tile_scaleing = 6;
+
+	
 
 
 	def __init__(self,width,height):
+
+		self.random = random.Random();
+		self.seed = None;
+		self.isseeded = False;
 
 		self.width = width;
 		self.height = height;
@@ -31,10 +47,19 @@ class Map(object):
 		self.apples = 0;
 		self.golden_apples = list();
 
+		self.map_area = width*height;
+
+	def setSeed(self, x):
+		self.random.seed(x);
+		self.seed = x;
+		self.isseeded = True;
+
+	def getSeed(self):
+		return self.seed;
 
 	def update(self):
 		
-		if(random.random() < 1/(self.spawn_chance+self.apples*2)):
+		if(self.random.random() < 1/(self.spawn_chance+self.apples*2)):
 			for i in range(10):
 				if(self.spawnApple()):
 					break;
@@ -44,9 +69,9 @@ class Map(object):
 				if(self.spawnApple()):
 					break;
 
-		if(random.random() < 1/(self.spawn_chance*5+len(self.golden_apples)*5)):
-			x = random.randint(1,self.width-1);
-			y = random.randint(1,self.height-1);
+		if(self.random.random() < 1/(self.spawn_chance*5+len(self.golden_apples)*5)):
+			x = self.random.randint(1,self.width-1);
+			y = self.random.randint(1,self.height-1);
 
 			if(self.getTile(x,y) == Map.tile_empty):
 				self.setTile(x,y,Map.tile_golden_apple);
@@ -56,24 +81,30 @@ class Map(object):
 		for apple in self.golden_apples:
 			apple[2] += 1;
 			if(apple[2] > self.despawn_time):
-				if(random.random() < 0.33):
+				if(self.random.random() < 0.33):
 					remove.append(apple);
 		for apple in remove:
 			self.golden_apples.remove(apple);
 			## Keep bug were snake despawns where it has picked up a
 			## golden apple. But don't despawn the snake head.
 			## Half fix - keeping bug as 'feature'
-			if(self.getTile(apple[0],apple[1]) == Map.tile_snake_mouth):
-				continue;
-			self.setTile(apple[0],apple[1],Map.tile_empty);
+			if(self.getTile(apple[0],apple[1]) == Map.tile_golden_apple):
+				self.setTile(apple[0],apple[1],Map.tile_empty);
 
 
 	def getState(self):
-		return self.array/5;
+		return self.array/Map.tile_scaleing;
 
 
 	def generateMap(self):
-
+		global perlin;
+		if(self.isseeded):
+			self.random.seed(self.seed);
+		else:
+			self.seed = random.randint(10000,1000000000000);
+			self.random.seed(self.seed);
+		self.isseeded = False;
+		
 
 		## Add walls to the border of the map
 		for x in range(self.width):
@@ -89,17 +120,17 @@ class Map(object):
 		if(perlin):
 			for x in range(1,self.width-1):
 				for y in range(1,self.height-1):
-					n = noise.pnoise2(x/self.width,y/self.height, base=random.randint(0,1023));
+					n = noise.pnoise2(x/self.width,y/self.height, base=self.random.randint(0,1023));
 					if(n > 0.35):
 						self.setTile(x,y,Map.tile_wall);
 		else:
-			for i in range(random.randint(4,10)):
-				x = random.randint(1,self.width-1);
-				y = random.randint(1,self.height-1);
+			for i in range(self.random.randint(4,10)):
+				x = self.random.randint(1,self.width-1);
+				y = self.random.randint(1,self.height-1);
 				self.setTile(x,y, Map.tile_wall);
 
 		## Add som apples
-		for i in range(random.randint(4,10)):
+		for i in range(self.random.randint(4,10)):
 			self.spawnApple();
 
 
@@ -124,16 +155,17 @@ class Map(object):
 					self.apples -= 1;
 				self.setTile(x,y,Map.tile_empty);
 
-		"""
-		## Add in the snake
-		for x in range(x1+3, x1+6):
-			self.setTile(x,y1+5,Map.tile_snake);
-		self.setTile(x1+6,y1+5, Map.tile_snake_mouth);
-		"""
+		self.map_area = self.width*self.height;
+		for x in range(self.width):
+			for y in range(self.height):
+				if(self.getTile(x,y) == Map.tile_wall):
+					self.map_area -= 1;
+
+		
 
 	def spawnApple(self):
-		x = random.randint(1,self.width-1);
-		y = random.randint(1,self.height-1);
+		x = self.random.randint(1,self.width-1);
+		y = self.random.randint(1,self.height-1);
 
 		if(self.getTile(x,y) == Map.tile_empty):
 			self.setTile(x,y, Map.tile_apple);
@@ -146,6 +178,40 @@ class Map(object):
 		self.apples = 0;
 		self.golden_apples = list();
 		self.generateMap();
+
+	def clear(self, size=None):
+
+		"""
+		for x in range(self.width):
+			self.array[x][0] = Map.tile_wall;
+			self.array[x][self.height-1] = Map.tile_wall;
+
+		for y in range(self.height):
+			self.array[0][y] = Map.tile_wall;
+			self.array[self.width-1][y] = Map.tile_wall;
+		"""
+		w = self.width;
+		h = self.height;
+		if(size != None):
+			w = size[0];
+			h = size[1];
+
+		for x in range(0,w):
+			for y in range(0,h):
+				self.setTile(x,y,Map.tile_empty);
+
+	def overlay(self, other):
+		self.clear((other.width, other.height));
+		self.array[0:other.width, 0:other.height] = other.array;
+
+	def saveState(self, path):
+		with open(path, "a+") as file:
+			for y in range(self.height):
+				for x in range(self.width):
+					file.write(str(self.getTile(x,y)/Map.tile_scaleing));
+					file.write(",");
+				file.write("\n");
+			file.close();
 		
 	def render(self):
 		for y in range(self.height):
@@ -169,6 +235,8 @@ class Map(object):
 			return 'o';
 		if(tile == Map.tile_snake_mouth):
 			return 'O';
+		if(tile == Map.tile_snake_tail):
+			return 'q';
 
 		return ' ';
 
@@ -187,3 +255,61 @@ class Map(object):
 				pass # Fix bug width despawning snake after eating golden apple here
 
 		return tile;
+
+	def getOpenArea(self):
+		return self.map_area;
+
+
+
+
+class RestrictedMap(object):
+
+
+	def __init__(self, width, height):
+		self.width = width;
+		self.height = height;
+		self.map = Map(width, height);
+
+		self.blank = Map(width, height);
+		self.blank.clear();
+
+	def init(self):
+		self.blank.overlay(self.map);
+
+	def limitSize(self, width, height):
+		self.map = Map(width, height);
+		self.blank.clear();
+
+	def reset(self):
+		self.blank.clear();
+		self.map.reset();
+		self.blank.overlay(self.map);
+
+	def update(self):
+		self.map.update();
+		self.blank.overlay(self.map);
+
+	def getSeed(self):
+		return self.map.getSeed();
+
+	def setSeed(self, seed):
+		self.map.setSeed(seed);
+
+	def getOpenArea(self):
+		return self.map.getOpenArea();
+
+	def render(self):
+		self.blank.render();
+
+	def saveState(self, path):
+		self.map.saveState(path);
+
+	def getState(self):
+		return self.blank.getState();
+
+	def getMap(self):
+		return self.map;
+
+
+
+
